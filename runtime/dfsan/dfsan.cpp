@@ -1015,14 +1015,23 @@ dfsan_label __taint_union_load(const dfsan_label *ls, uptr n, uint64_t size_in_b
     uint16_t next_size = get_label_info(next_label)->size;
     AOUT("next label=%u, size=%u\n", next_label, next_size);
     if (!is_constant_label(next_label)) {
+      // If no symbolic byte has been seen yet, bytes [0, i) are a concrete prefix that becomes
+      // this Concat's low (l1) operand. Capture its value as op1 -- otherwise the leading
+      // concrete byte(s) are lost (op1 stays 0). Mirrors the concrete-high-byte op2 case below.
+      uint64_t op1 = 0;
+      if (label == 0) {
+        const char *base = (const char *)app_for(&ls[0]);
+        for (uptr j = 0; j < i && j < 8; ++j)
+          op1 |= (uint64_t)(uint8_t)base[j] << (j * 8);
+      }
       if (next_size <= (n - i) * 8) {
         i += next_size / 8;
-        label = do_taint_union(label, next_label, Concat, i * 8, 0, 0);
+        label = do_taint_union(label, next_label, Concat, i * 8, op1, 0);
       } else {
         Report("WARNING: partial loading expected=%lu has=%d\n", n-i, next_size);
         uptr size = n - i;
         dfsan_label trunc = do_taint_union(next_label, CONST_LABEL, Trunc, size * 8, 0, 0);
-        dfsan_label result = do_taint_union(label, trunc, Concat, n * 8, 0, 0);
+        dfsan_label result = do_taint_union(label, trunc, Concat, n * 8, op1, 0);
         if (size_in_bits < n * 8)
           result = do_taint_union(result, CONST_LABEL, Trunc, size_in_bits, 0, 0);
         return result;
